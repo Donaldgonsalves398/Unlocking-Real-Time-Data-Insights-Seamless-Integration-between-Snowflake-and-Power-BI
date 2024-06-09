@@ -1,0 +1,135 @@
+---> set Role Context
+USE ROLE accountadmin;
+
+---> set Warehouse Context
+USE WAREHOUSE compute_wh;
+
+-->create database
+CREATE DATABASE Employees;
+
+-------------------------------------------------------------------------------------------
+    -- Step 3: Create Schema
+        -- CREATE SCHEMA: https://docs.snowflake.com/en/sql-reference/sql/create-schema
+-------------------------------------------------------------------------------------------
+
+---> create the Schema
+CREATE SCHEMA employees.operational;
+
+-------------------------------------------------------------------------------------------
+    -- Step 4: Create Table
+        -- CREATE TABLE: https://docs.snowflake.com/en/sql-reference/sql/create-table
+-------------------------------------------------------------------------------------------
+
+---> create the Table
+
+CREATE OR REPLACE TABLE employees.operational.call_data (
+    Call_Id STRING,
+    Agent STRING,
+    Date STRING,
+    Time STRING,
+    Topic STRING,
+    Answered STRING,
+    Resolved STRING,
+    Speed_of_answer_in_seconds FLOAT,
+    AvgTalkDuration STRING,
+    Satisfaction_rating FLOAT
+--> supported types: https://docs.snowflake.com/en/sql-reference/intro-summary-data-types.html
+);
+
+    ALTER TABLE employees.operational.call_data ADD primary key (Call_Id );
+
+---> query the empty Table
+SELECT * FROM employees.operational.call_data;
+
+
+-------------------------------------------------------------------------------------------
+    -- Step 5: Create Storage Integrations
+        -- CREATE STORAGE INTEGRATION: https://docs.snowflake.com/en/sql-reference/sql/create-storage-integration
+
+---> Create the Google Cloud Storage Integration
+    -- Configuring an Integration for Google Cloud Storage: https://docs.snowflake.com/en/user-guide/data-load-gcs-config
+    
+CREATE STORAGE INTEGRATION GCS_Snowflakes_Data_Integration
+  TYPE = EXTERNAL_STAGE
+  STORAGE_PROVIDER = 'GCS'
+  ENABLED = TRUE
+  STORAGE_ALLOWED_LOCATIONS = ('gcs://employee-dump/' )
+
+
+  ---> Describe our Integration
+    -- DESCRIBE INTEGRATIONS: https://docs.snowflake.com/en/sql-reference/sql/desc-integration
+DESCRIBE INTEGRATION GCS_Snowflakes_Data_Integration;
+
+
+---> View our Storage Integrations
+    -- SHOW INTEGRATIONS: https://docs.snowflake.com/en/sql-reference/sql/show-integrations
+
+SHOW STORAGE INTEGRATIONS;
+
+-------------------------------------------------------------------------------------------
+    -- Step 6: Create File Format
+----------------------
+--Defining file format
+
+CREATE  FILE FORMAT my_csv_format
+TYPE = 'CSV'
+FIELD_DELIMITER = ','
+SKIP_HEADER = 1;
+
+   -- Step 7: Create Notification Integration Objects
+--Create notification Integration
+
+CREATE NOTIFICATION INTEGRATION GCP_Snowflakes_Notification_Integration
+  ENABLED = true
+  TYPE = QUEUE
+  NOTIFICATION_PROVIDER = GCP_PUBSUB 
+  GCP_PUBSUB_SUBSCRIPTION_NAME =
+  'projects/donal-project/subscriptions/snowpipe_subscription';  --GCP Pub/Sub Subscription ID
+ 
+
+  --Drop NOTIFICATION INTEGRATION GCP_Snowflakes_Notification_Integration;
+
+  DESC NOTIFICATION INTEGRATION GCP_Snowflakes_Notification_Integration;
+
+
+   -- Step 8: Create Stage Objects
+---> Create the Google Cloud Storage Stage
+    -- Create a Google Cloud Stage: https://docs.snowflake.com/en/user-guide/data-load-gcs-config#create-an-external-stage-using-sql
+
+  CREATE STAGE  GCS_Snowflakes_Data_Stage_Notification
+URL = 'gcs://employee-dump/' --Google Storage Bucket Location
+STORAGE_INTEGRATION = GCS_Snowflakes_Data_Integration -- created in previous step
+FILE_FORMAT = my_csv_format
+DIRECTORY = (
+    ENABLE = true
+    AUTO_REFRESH = true
+    NOTIFICATION_INTEGRATION = 'GCP_SNOWFLAKES_NOTIFICATION_INTEGRATION' -- 
+  )
+;
+
+LIST @GCS_Snowflakes_Data_Stage_Notification
+
+--Drop Stage GCS_Snowflakes_Data_Stage_Notification;
+
+show stages;
+
+--Create Snowpipe
+
+CREATE PIPE GCP_Snowflakes_Pipe AUTO_INGEST = TRUE 
+INTEGRATION = GCP_Snowflakes_Notification_Integration 
+AS
+ COPY INTO employees.operational.call_data 
+  FROM @GCS_Snowflakes_Data_Stage_Notification
+    FILE_FORMAT = (FORMAT_NAME = my_csv_format);
+
+
+--Describe SnowPipe Configuration
+    SHOW PIPES;
+
+  DESCRIBE PIPE GCP_Snowflakes_Pipe;
+
+--Shows status of snowpipe created
+ SELECT system$pipe_status('GCP_Snowflakes_Pipe');
+
+--Shows loading history
+SELECT * FROM information_schema.load_history
